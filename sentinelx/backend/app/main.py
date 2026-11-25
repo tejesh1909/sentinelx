@@ -478,5 +478,20 @@ def login(b: Login, req: Request, db=Depends(get_db)):
     if ok and u.mfa_enabled:
         if not b.otp: raise HTTPException(401, "MFA code required")
         ok = pyotp.TOTP(u.mfa_secret).verify(b.otp, valid_window=1)
-    if not ok:
+       if not ok:
         if u:
+            u.failed_attempts = (u.failed_attempts or 0) + 1
+
+            if u.failed_attempts >= 5:
+                u.locked_until = now() + dt.timedelta(minutes=15)
+                u.failed_attempts = 0
+
+        audit(db, None, "login_failed", b.email[:100], req=req)
+        db.commit()
+        raise HTTPException(401, "Invalid credentials")
+
+    u.failed_attempts = 0
+    u.locked_until = None
+
+    audit(db, u, "login", u.id, req=req)
+    return issue(db, u)
