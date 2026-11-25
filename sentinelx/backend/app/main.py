@@ -388,7 +388,6 @@ import csv, html, io, ipaddress, json, os, secrets, time, datetime as dt
 import httpx, pyotp
 from typing import Literal
 from fastapi import BackgroundTasks, FastAPI, Query, Depends, HTTPException, Request, UploadFile, File
-from fastapi.middleware.cors import CORSMiddleware
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import HTMLResponse, JSONResponse, Response, StreamingResponse
 from fastapi.security import HTTPBearer
@@ -400,21 +399,6 @@ from .core import SessionLocal, hash_pw, verify_pw, make_token, decode, hit, now
 from .models import *
 
 app = FastAPI(title="SentinelX API", version="1.0", docs_url="/api/docs", openapi_url="/api/openapi.json")
-
-# Allow the deployed Vercel frontend to call this Render API.
-# Set CORS_ORIGINS in Render to the exact frontend origin, e.g. https://your-app.vercel.app
-cors_origins = [
-    origin.strip().rstrip("/")
-    for origin in os.getenv("CORS_ORIGINS", "").split(",")
-    if origin.strip()
-]
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=cors_origins,
-    allow_credentials=False,
-    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    allow_headers=["Authorization", "Content-Type"],
-)
 RL_OFF = os.getenv("RATE_LIMIT_DISABLED") == "1"; MAX_UPLOAD = 2 * 1024 * 1024
 ST = ["new", "investigating", "in_progress", "resolved", "closed"]; PRI = ["low", "medium", "high", "critical"]
 
@@ -496,19 +480,3 @@ def login(b: Login, req: Request, db=Depends(get_db)):
         ok = pyotp.TOTP(u.mfa_secret).verify(b.otp, valid_window=1)
     if not ok:
         if u:
-            u.failed_attempts = (u.failed_attempts or 0) + 1
-            if u.failed_attempts >= 5: u.locked_until = now() + dt.timedelta(minutes=15); u.failed_attempts = 0
-        audit(db, None, "login_failed", b.email[:100], req=req); db.commit(); raise HTTPException(401, "Invalid credentials")
-    u.failed_attempts = 0; u.locked_until = None
-    audit(db, u, "login", u.id, req=req); return issue(db, u)
-@app.post("/api/auth/refresh")
-def refresh(b: Refresh, db=Depends(get_db)):
-    try:
-        p = decode(b.refresh_token); assert p["type"] == "refresh"
-    except Exception: raise HTTPException(401, "Invalid refresh token")
-    s = db.get(AuthSession, p["jti"]); u = db.get(User, p["sub"])
-    if not s or s.revoked or not u or not u.is_active: raise HTTPException(401, "Session expired")
-    s.revoked = True; return issue(db, u)
-@app.post("/api/auth/logout")
-def logout(b: Refresh, db=Depends(get_db)):
-    try:
