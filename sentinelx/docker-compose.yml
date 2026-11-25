@@ -1,0 +1,27 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment: {POSTGRES_USER: sentinelx, POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:-sentinelx_dev}", POSTGRES_DB: sentinelx}
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck: {test: ["CMD-SHELL", "pg_isready -U sentinelx"], interval: 5s, retries: 10}
+  redis:
+    image: redis:7-alpine
+  backend:
+    build: ./backend
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+psycopg://sentinelx:${POSTGRES_PASSWORD:-sentinelx_dev}@db:5432/sentinelx
+      REDIS_URL: redis://redis:6379/0
+    depends_on: {db: {condition: service_healthy}, redis: {condition: service_started}}
+  worker:
+    build: ./backend
+    command: rq worker ingest --url redis://redis:6379/0
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+psycopg://sentinelx:${POSTGRES_PASSWORD:-sentinelx_dev}@db:5432/sentinelx
+    depends_on: [backend, redis]
+  frontend:
+    build: ./frontend
+    ports: ["3000:80"]
+    depends_on: [backend]
+volumes: {pgdata: {}}
